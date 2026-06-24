@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { Runnable } from "@langchain/core/runnables";
 import { chromium, Browser } from "playwright";
-import { BadRequestError, ValidationError } from "../errors/AppError";
+import { BadRequestError, ValidationError, ServiceUnavailableError } from "../errors/AppError";
+import { openaiJobExtractor } from "../lib/llm";
 
 /**
  * 1. Define the Job Schema and the type of the JobDetails
@@ -18,6 +18,10 @@ const JobSchema = z.object({
   description: z.string().nullable().describe("Main job responsibilities"),
   location: z.string().nullable().describe("Office location or 'Remote'"),
   salary: z.string().nullable().describe("Payment Range"),
+  companyDescription: z
+    .string()
+    .nullable()
+    .describe("Short summary of what the company does, only if an About Us / company intro section is present on the page. Null if not present."),
 });
 
 type JobDetails = z.infer<typeof JobSchema>;
@@ -30,22 +34,8 @@ export class JobExtractorService {
   private browser: Browser | null = null;
 
   constructor() {
-    /**
-     * Setup the LangChain model
-     */
-    const llm = new ChatGoogleGenerativeAI({
-      //use the newest model
-      model: "gemini-2.5-flash",
-      //temperature set to 0 to make sure it would not fabricate
-      temperature: 0,
-      //set max output token for the data
-      maxOutputTokens: 2048,
-      maxRetries: 2,
-      apiKey: process.env.GOOGLE_API_KEY,
-    });
-
-    //force the model to output the zod schema
-    this.structuredLlm = llm.withStructuredOutput(JobSchema);
+    //Use the preset llm model to output the zod schema
+    this.structuredLlm = openaiJobExtractor.withStructuredOutput(JobSchema);
   }
 
   /**
@@ -67,7 +57,10 @@ export class JobExtractorService {
       jobDetails = await this.extractJD(url, pageContent);
     } catch (error) {
       console.error("Extraction Service Error:", error);
-      // 6. Preserve original error message for easier debugging
+      const status = (error as any)?.status;
+      if (status === 503 || status === 429) {
+        throw new ServiceUnavailableError();
+      }
       throw new Error(
         `Failed to extract job information: ${(error as Error).message}`,
       );
@@ -75,7 +68,9 @@ export class JobExtractorService {
 
     // Handle non-job pages outside the try-catch so the message stays clean
     if (!jobDetails.isJob) {
-      throw new ValidationError("The provided URL does not appear to be a job posting.");
+      throw new ValidationError(
+        "The provided URL does not appear to be a job posting.",
+      );
     }
 
     return jobDetails;
@@ -134,7 +129,7 @@ export class JobExtractorService {
     Rules:
       - If the webpage is a job posting, set isJob to true.
       - If the webpage is not a job posting, set isJob to false.
-      - If isJob is false, set company, position, requirements, description, location, and salary to null.
+      - If isJob is false, set company, position, requirements, description, location, salary, and companyDescription to null.
       - Do not invent missing information.
       - If a field is not clearly provided, set it to null.
       - Salary can include hourly, yearly, monthly, or range information.
@@ -142,6 +137,7 @@ export class JobExtractorService {
       - Requirements should include candidate qualifications, skills, experience, education, or technology requirements.
       - Description should include the main responsibilities or duties of the role.
       - Keep requirements and description concise but complete.
+      - companyDescription should only be filled in if the page itself has an "About Us" / company intro section describing what the company does. Do not infer it from the job title or guess based on the company name — leave it null if the page doesn't say.
     URL:
     ${url}
     Webpage content:

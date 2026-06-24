@@ -1,0 +1,110 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User{
+  id String @id @default(uuid())
+  email String @unique
+  passwordHash String
+  firstName String
+  lastName String
+  targetRole String?
+  location String?
+  linkedIn String?
+  resumeText String?
+  resumeFileName String?
+  refreshTokens RefreshToken[]
+  applications Application[]
+  gapAnalyses GapAnalysis[]
+  coverLetters CoverLetter[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RefreshToken{
+  id String @id @default(uuid())
+  tokenHash String @unique
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Application {
+  id           String            @id @default(uuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  url          String
+  company      String?
+  // Short "what does this company do" blurb. Populated in two stages: first
+  // for free from the JD page itself during extraction (JobExtractorService),
+  // then backfilled via a web search the first time it's needed (CoverLetterService)
+  // if the JD page didn't have an About-Us-style section.
+  companyDescription String?
+  position     String?
+  requirements String?
+  description  String?
+  location     String?
+  salary       String?
+  status       ApplicationStatus @default(SAVED)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  gapAnalyses  GapAnalysis[]
+  coverLetters CoverLetter[]
+}
+
+model GapAnalysis {
+  id            String   @id @default(uuid())
+  userId        String
+  // Nullable on purpose: keep the analysis row if the application is later deleted (onDelete: SetNull),
+  // not because the API allows analyzing without an applicationId.
+  applicationId String?
+  inputHash     String
+  result        Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  // inputHash (not applicationId) is the cache key, since the same application's resume/JD
+  // content can change over time (resume re-upload, JD edits, scoring version bump).
+  @@unique([userId, inputHash])
+  @@index([applicationId])
+}
+
+model CoverLetter {
+  id            String   @id @default(uuid())
+  userId        String
+  // Nullable for the same reason as GapAnalysis.applicationId: keep the row if the
+  // application is later deleted (onDelete: SetNull).
+  applicationId String?
+  inputHash     String
+  result        Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, inputHash])
+  @@index([applicationId])
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  INTERVIEWING
+  OFFER
+  REJECTED
+}
