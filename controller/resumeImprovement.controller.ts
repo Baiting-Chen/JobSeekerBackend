@@ -1,15 +1,15 @@
 import { Request, Response, Router } from "express";
-import { InterviewPrepService } from "../service/interviewPrep.service";
+import { ResumeImprovementService } from "../service/resumeImprovement.service";
 import { BadRequestError } from "../errors/AppError";
 
 const router = Router();
-const interviewPrepService = new InterviewPrepService();
+const resumeImprovementService = new ResumeImprovementService();
 
 router.post("/", async (req: Request, res: Response) => {
   const { applicationId, force } = req.body;
   if (!applicationId) throw new BadRequestError("applicationId is required");
 
-  const result = await interviewPrepService.generate(req.user!.id, applicationId, Boolean(force));
+  const result = await resumeImprovementService.generate(req.user!.id, applicationId, Boolean(force));
   res.status(200).json(result);
 });
 

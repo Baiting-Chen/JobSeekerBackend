@@ -27,6 +27,8 @@ model User{
   applications Application[]
   gapAnalyses GapAnalysis[]
   coverLetters CoverLetter[]
+  interviewPreps InterviewPrep[]
+  resumeImprovements ResumeImprovement[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -61,6 +63,8 @@ model Application {
   updatedAt    DateTime          @updatedAt
   gapAnalyses  GapAnalysis[]
   coverLetters CoverLetter[]
+  interviewPreps InterviewPrep[]
+  resumeImprovements ResumeImprovement[]
 }
 
 model GapAnalysis {
@@ -84,6 +88,42 @@ model GapAnalysis {
 }
 
 model CoverLetter {
+  id            String   @id @default(uuid())
+  userId        String
+  // Nullable for the same reason as GapAnalysis.applicationId: keep the row if the
+  // application is later deleted (onDelete: SetNull).
+  applicationId String?
+  inputHash     String
+  result        Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, inputHash])
+  @@index([applicationId])
+}
+
+model InterviewPrep {
+  id            String   @id @default(uuid())
+  userId        String
+  // Nullable for the same reason as GapAnalysis.applicationId: keep the row if the
+  // application is later deleted (onDelete: SetNull).
+  applicationId String?
+  inputHash     String
+  result        Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, inputHash])
+  @@index([applicationId])
+}
+
+model ResumeImprovement {
   id            String   @id @default(uuid())
   userId        String
   // Nullable for the same reason as GapAnalysis.applicationId: keep the row if the
