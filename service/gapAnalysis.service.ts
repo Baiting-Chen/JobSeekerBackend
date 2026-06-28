@@ -6,14 +6,16 @@ import { ApplicationService } from "./application.service";
 import { BadRequestError } from "../errors/AppError";
 import { handleLLMError } from "../lib/llmErrors";
 import { createInputHash } from "../lib/inputHash";
+import { getOrGenerate } from "../lib/cachedGeneration";
 import { dedupeSkills, calculateOverallMatch, calculateBreakdown } from "./gapAnalysisScoring";
 
-// Bump this if the prompt, scoring formula, or underlying model changes, so
-// old cached results (computed under the old rules) stop being served as if
-// they were comparable. Bumped to v3 for the matched -> matchLevel scoring rework.
-const GAP_ANALYSIS_VERSION = "v3";
+// Bump this if the prompt, scoring formula, result shape, or underlying model
+// changes, so old cached results (computed under the old rules) stop being
+// served as if they were comparable. Bumped to v5: weak match multiplier
+// 0.5 -> 0.35, plus evidence-aware tie-breaking in dedupeSkills.
+const GAP_ANALYSIS_VERSION = "v5";
 
-// LLM only extracts evidence — backend calculates the score.
+// LLM extracts requirements/match levels/evidence; backend scores.
 // Array/string bounds keep structured output small enough to avoid truncated,
 // unparseable JSON (OutputParserException) on JDs/resumes with lots of content.
 const GapAnalysisLLMSchema = z.object({
@@ -50,7 +52,10 @@ export type GapAnalysisResult = {
   // null (not 0) when the JD has no skills in that category — 0 would misleadingly read as "bad"
   breakdown: { mustHaveScore: number | null; niceToHaveScore: number | null };
   requiredSkills: RequiredSkill[];
+  // Mutually exclusive and exhaustive over requiredSkills by matchLevel: every skill
+  // appears in exactly one of these three lists.
   matchedSkills: string[];
+  weakSkills: string[];
   missingSkills: string[];
   suggestions: string[];
 };
@@ -71,6 +76,9 @@ export class GapAnalysisService {
     if (!user?.resumeText) {
       throw new BadRequestError("Please upload your resume before running gap analysis");
     }
+    // Narrowed to a local const since the property narrowing on `user.resumeText`
+    // above doesn't carry into the generate() closure below.
+    const resumeText = user.resumeText;
 
     // Reuse the saved Application as the single source of truth for the JD,
     // instead of trusting JD fields re-sent by the client on every call.
@@ -89,34 +97,17 @@ export class GapAnalysisService {
     // Hash the actual content, not the applicationId — the user can edit
     // the application's JD fields or re-upload their resume after the fact.
     const inputHash = createInputHash(GAP_ANALYSIS_VERSION, [
-      user.resumeText,
+      resumeText,
       jd.company,
       jd.position,
       jd.requirements,
       jd.description,
     ]);
 
-    if (!force) {
-      const cached = await prisma.gapAnalysis.findUnique({
-        where: { userId_inputHash: { userId, inputHash } },
-      });
-      if (cached) return cached.result as GapAnalysisResult;
-    }
-
-    const llmOutput = await this.extractWithLLM(user.resumeText, jd);
-    const result = this.buildResult(llmOutput);
-
-    // upsert (not create): force=true re-runs against an inputHash that may already
-    // have a cached row, and this also makes the original "two concurrent requests
-    // race to create the same row" case a non-issue, since Postgres handles the
-    // insert-or-update atomically via ON CONFLICT.
-    await prisma.gapAnalysis.upsert({
-      where: { userId_inputHash: { userId, inputHash } },
-      create: { userId, applicationId, inputHash, result },
-      update: { applicationId, result },
+    return getOrGenerate<GapAnalysisResult>(prisma.gapAnalysis, { userId, applicationId, inputHash, force }, async () => {
+      const llmOutput = await this.extractWithLLM(resumeText, jd);
+      return this.buildResult(llmOutput);
     });
-
-    return result;
   }
 
   private async extractWithLLM(
@@ -136,8 +127,8 @@ Rules:
 4. For each skill, set matchLevel: "strong" only if the resume clearly and directly demonstrates it; "weak" if the evidence is only related, indirect, or partial; "missing" if there is no evidence at all. Do not default to "strong" out of generosity.
 5. Provide a short evidence summary or short quote from the resume, or null if not found.
 6. Do NOT calculate any score. The backend will calculate it.
-7. Suggestions must be specific and actionable (e.g. "Add a project using Kubernetes").
-8. Extract only meaningful skills, tools, technologies, qualifications, or experience requirements. Avoid duplicate or overly broad skills.
+7. Suggestions must be specific and actionable (e.g. "Add a project using Kubernetes"), and should focus on weak or missing must-have requirements first.
+8. Extract only meaningful skills, tools, technologies, qualifications, or experience requirements. Avoid duplicate or overly broad skills. Do not extract generic responsibilities unless they represent concrete skills, tools, or requirements.
 9. Extract at most 15 requiredSkills. Prioritize the most important requirements rather than every sentence in the JD.
 10. Keep each skill under 80 characters.
 11. Keep each evidence under 200 characters.
@@ -166,15 +157,13 @@ Responsibilities: ${jd.description ?? "N/A"}
   private buildResult(llmOutput: LLMOutput): GapAnalysisResult {
     const requiredSkills = dedupeSkills(llmOutput.requiredSkills);
 
-    // "weak" matches are bucketed with "missing" here — this list is meant to read
-    // as "skills you can confidently claim," and a weak/indirect match doesn't qualify.
-    // The full matchLevel (including "weak") is still available per-skill in requiredSkills.
     return {
       overallMatch: calculateOverallMatch(requiredSkills),
       breakdown: calculateBreakdown(requiredSkills),
       requiredSkills,
       matchedSkills: requiredSkills.filter((s) => s.matchLevel === "strong").map((s) => s.skill),
-      missingSkills: requiredSkills.filter((s) => s.matchLevel !== "strong").map((s) => s.skill),
+      weakSkills: requiredSkills.filter((s) => s.matchLevel === "weak").map((s) => s.skill),
+      missingSkills: requiredSkills.filter((s) => s.matchLevel === "missing").map((s) => s.skill),
       suggestions: llmOutput.suggestions,
     };
   }

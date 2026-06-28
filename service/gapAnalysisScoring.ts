@@ -9,16 +9,22 @@ export interface ScoredSkill {
 
 // Collapses exact case-insensitive duplicates only (e.g. "TypeScript" listed twice).
 // This is NOT semantic alias normalization ("TS" vs "TypeScript") — that's deliberately
-// left to the LLM rather than a hand-maintained alias map.
+// left to the LLM rather than a hand-maintained alias map. On a matchLevel tie, prefers
+// whichever duplicate has concrete evidence over one with null evidence, rather than
+// arbitrarily keeping whichever happened to appear first.
 export function dedupeSkills<T extends ScoredSkill>(skills: T[]): T[] {
   const rank: Record<MatchLevel, number> = { strong: 2, weak: 1, missing: 0 };
   const map = new Map<string, T>();
   for (const skill of skills) {
     const key = skill.skill.toLowerCase().trim();
     const existing = map.get(key);
-    if (!existing || rank[skill.matchLevel] > rank[existing.matchLevel]) {
+    if (!existing) {
       map.set(key, skill);
+      continue;
     }
+    const rankDiff = rank[skill.matchLevel] - rank[existing.matchLevel];
+    const prefersNew = rankDiff > 0 || (rankDiff === 0 && !existing.evidence && !!skill.evidence);
+    if (prefersNew) map.set(key, skill);
   }
   return Array.from(map.values());
 }
@@ -28,7 +34,7 @@ function getMatchMultiplier(matchLevel: MatchLevel): number {
     case "strong":
       return 1;
     case "weak":
-      return 0.5;
+      return 0.35;
     case "missing":
       return 0;
   }

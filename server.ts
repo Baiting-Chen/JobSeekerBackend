@@ -8,6 +8,8 @@ import applicationRouter from "./controller/application.controller";
 import gapAnalysisRouter from "./controller/gapAnalysis.controller";
 import coverLetterRouter from "./controller/coverLetter.controller";
 import interviewPrepRouter from "./controller/interviewPrep.controller";
+import resumeImprovementRouter from "./controller/resumeImprovement.controller";
+import applicationPackRouter from "./controller/applicationPack.controller";
 import { errorHandler } from "./middleware/errorHandler";
 import { requireAuth } from "./middleware/auth";
 
@@ -25,6 +27,8 @@ app.use("/api/v1/applications", requireAuth, applicationRouter);
 app.use("/api/v1/gap-analysis", requireAuth, gapAnalysisRouter);
 app.use("/api/v1/cover-letter", requireAuth, coverLetterRouter);
 app.use("/api/v1/interview-prep", requireAuth, interviewPrepRouter);
+app.use("/api/v1/resume-improvement", requireAuth, resumeImprovementRouter);
+app.use("/api/v1/application-pack", requireAuth, applicationPackRouter);
 
 // Must be registered after all routes
 app.use(errorHandler);

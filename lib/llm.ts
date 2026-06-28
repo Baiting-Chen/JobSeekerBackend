@@ -34,7 +34,26 @@ export const openaiCoverLetter = new ChatOpenAI({
 
 export const openaiInterviewPrep = new ChatOpenAI({
   model: "gpt-5-mini",
-  maxTokens: 4096,
+  // Higher than the others: each question now carries difficulty/focusArea/
+  // whatToCover on top of question+category, so 10 questions worth of visible
+  // output is noticeably larger than GapAnalysis's 15 skills.
+  maxTokens: 6144,
+  reasoning: { effort: "minimal" },
+  maxRetries: 2,
+  apiKey: process.env.GPT_API_KEY,
+});
+
+export const openaiResumeImprovement = new ChatOpenAI({
+  model: "gpt-5-mini",
+  maxTokens: 6144,
+  reasoning: { effort: "minimal" },
+  maxRetries: 2,
+  apiKey: process.env.GPT_API_KEY,
+});
+
+export const openaiCoverLetterCheck = new ChatOpenAI({
+  model: "gpt-5-mini",
+  maxTokens: 3072,
   reasoning: { effort: "minimal" },
   maxRetries: 2,
   apiKey: process.env.GPT_API_KEY,
